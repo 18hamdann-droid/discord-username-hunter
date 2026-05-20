@@ -4,7 +4,6 @@ import {
   ButtonInteraction,
   ButtonStyle,
   ChannelType,
-  EmbedBuilder,
   Guild,
   ModalBuilder,
   ModalSubmitInteraction,
@@ -26,6 +25,16 @@ import {
 import { checkUsername, sleep } from "../username-checker.js";
 import { CHAR_SETS } from "../config.js";
 
+const SESSION_MINUTES = SESSION_DURATION_MS / 60000;
+
+function formatTimeLeft(startedAt: number): string {
+  const elapsed = Date.now() - startedAt;
+  const left = Math.max(0, SESSION_DURATION_MS - elapsed);
+  const m = Math.floor(left / 60000);
+  const s = Math.floor((left % 60000) / 1000);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 export async function handleStartHunt(interaction: ButtonInteraction): Promise<void> {
   const userId = interaction.user.id;
   const guild = interaction.guild as Guild;
@@ -35,7 +44,7 @@ export async function handleStartHunt(interaction: ButtonInteraction): Promise<v
     const hours = Math.floor(remainingMs / 3600000);
     const minutes = Math.floor((remainingMs % 3600000) / 60000);
     await interaction.reply({
-      content: `⏳ أنت في cooldown! يجب الانتظار **${hours}h ${minutes}m** قبل جلسة جديدة.`,
+      content: `⏳ أنت في cooldown! انتظر **${hours}h ${minutes}m** قبل جلسة جديدة.`,
       ephemeral: true,
     });
     return;
@@ -44,7 +53,7 @@ export async function handleStartHunt(interaction: ButtonInteraction): Promise<v
   const existing = getSession(userId);
   if (existing) {
     await interaction.reply({
-      content: "⚠️ لديك جلسة صيد نشطة بالفعل! اذهب للروم الخاص.",
+      content: "⚠️ لديك جلسة نشطة بالفعل!",
       ephemeral: true,
     });
     return;
@@ -56,10 +65,7 @@ export async function handleStartHunt(interaction: ButtonInteraction): Promise<v
     name: `hunt-${interaction.user.username}`,
     type: ChannelType.GuildText,
     permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.ViewChannel],
-      },
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       {
         id: userId,
         allow: [
@@ -81,6 +87,8 @@ export async function handleStartHunt(interaction: ButtonInteraction): Promise<v
     ],
   });
 
+  const startedAt = Date.now();
+
   const timeoutHandle = setTimeout(async () => {
     await closeSession(userId, channel as TextChannel, "timeout");
   }, SESSION_DURATION_MS);
@@ -89,51 +97,38 @@ export async function handleStartHunt(interaction: ButtonInteraction): Promise<v
     channelId: channel.id,
     guildId: guild.id,
     timeoutHandle,
+    startedAt,
     results: [],
     running: false,
     stopRequested: false,
   });
 
-  await interaction.editReply({
-    content: `✅ تم إنشاء رومك الخاص! اذهب إلى ${channel}`,
-  });
+  await interaction.editReply({ content: `✅ رومك جاهز! ${channel}` });
 
-  await sendHuntSetup(channel as TextChannel, interaction.user.id, interaction.user.username);
+  await sendHuntSetup(channel as TextChannel, userId, startedAt);
 }
 
 async function sendHuntSetup(
   channel: TextChannel,
   userId: string,
-  username: string,
+  startedAt: number,
 ): Promise<void> {
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle("🎯 إعداد جلسة الصيد")
-    .setDescription(
-      [
-        `<@${userId}> مرحباً! جلستك جاهزة.`,
-        "",
-        "⏱️ **لديك 10 دقائق** قبل إغلاق هذا الروم تلقائياً.",
-        "",
-        "**اختر طول اليوزر المطلوب:**",
-      ].join("\n"),
-    )
-    .setFooter({ text: `جلسة: ${username}` })
-    .setTimestamp();
-
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId(`select_length:${userId}`)
     .setPlaceholder("اختر عدد الحروف")
     .addOptions([
-      { label: "3 حروف", value: "3", description: "مثال: abc, xyz" },
-      { label: "4 حروف", value: "4", description: "مثال: test, cool" },
-      { label: "5 حروف", value: "5", description: "مثال: gamer, pixel" },
-      { label: "6 حروف", value: "6", description: "مثال: hunter, finder" },
+      { label: "3 حروف", value: "3" },
+      { label: "4 حروف", value: "4" },
+      { label: "5 حروف", value: "5" },
+      { label: "6 حروف", value: "6" },
     ]);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
-  await channel.send({ embeds: [embed], components: [row] });
+  await channel.send({
+    content: `<@${userId}> — ⏱️ **الوقت المتبقي: ${formatTimeLeft(startedAt)}**\n\nاختر طول اليوزر:`,
+    components: [row],
+  });
 }
 
 export async function handleSelectLength(
@@ -145,40 +140,25 @@ export async function handleSelectLength(
     return;
   }
 
+  const session = getSession(ownerId);
+  const timeStr = session ? formatTimeLeft(session.startedAt) : "?";
   const length = parseInt(interaction.values[0], 10);
-
-  const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle("🔤 اختر نوع الحروف")
-    .setDescription(`اخترت **${length} حروف**. الآن اختر نوع الحروف المستخدمة:`);
 
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId(`select_charset:${ownerId}:${length}`)
     .setPlaceholder("اختر نوع الحروف")
     .addOptions([
-      {
-        label: "حروف فقط (a-z)",
-        value: "letters",
-        description: "مثال: abcd, wxyz",
-        emoji: "🔡",
-      },
-      {
-        label: "أرقام فقط (0-9)",
-        value: "numbers",
-        description: "مثال: 1234, 5678",
-        emoji: "🔢",
-      },
-      {
-        label: "حروف وأرقام",
-        value: "all",
-        description: "مثال: a1b2, x3y4",
-        emoji: "🔣",
-      },
+      { label: "حروف فقط (a-z)", value: "letters", emoji: "🔡" },
+      { label: "أرقام فقط (0-9)", value: "numbers", emoji: "🔢" },
+      { label: "حروف وأرقام", value: "all", emoji: "🔣" },
     ]);
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
 
-  await interaction.update({ embeds: [embed], components: [row] });
+  await interaction.update({
+    content: `⏱️ **${timeStr}** — اخترت **${length} حروف**. اختر نوع الحروف:`,
+    components: [row],
+  });
 }
 
 export async function handleSelectCharset(
@@ -190,27 +170,14 @@ export async function handleSelectCharset(
     return;
   }
 
+  const session = getSession(ownerId);
+  const timeStr = session ? formatTimeLeft(session.startedAt) : "?";
   const length = parseInt(lengthStr, 10);
   const charSetKey = interaction.values[0] as keyof typeof CHAR_SETS;
-  const charSet = CHAR_SETS[charSetKey];
-
-  const embed = new EmbedBuilder()
-    .setColor(0x5865f2)
-    .setTitle("✏️ بادئة أو لاحقة (اختياري)")
-    .setDescription(
-      [
-        `اخترت: **${length} حروف** من نوع **${charSetKey}**`,
-        "",
-        "هل تريد تحديد بادئة أو لاحقة ثابتة؟",
-        "مثال: بادئة `pro` → `proXX`",
-        "",
-        "اضغط **تخصيص** لإضافة بادئة/لاحقة، أو **ابدأ الآن** للبدء فوراً.",
-      ].join("\n"),
-    );
 
   const customBtn = new ButtonBuilder()
     .setCustomId(`custom_affix:${ownerId}:${length}:${charSetKey}`)
-    .setLabel("✏️ تخصيص بادئة/لاحقة")
+    .setLabel("✏️ بادئة/لاحقة")
     .setStyle(ButtonStyle.Secondary);
 
   const startBtn = new ButtonBuilder()
@@ -220,7 +187,10 @@ export async function handleSelectCharset(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(customBtn, startBtn);
 
-  await interaction.update({ embeds: [embed], components: [row] });
+  await interaction.update({
+    content: `⏱️ **${timeStr}** — **${length} حروف** | **${charSetKey}**\n\nبادئة/لاحقة؟ أو ابدأ مباشرة:`,
+    components: [row],
+  });
 }
 
 export async function handleCustomAffix(interaction: ButtonInteraction): Promise<void> {
@@ -232,11 +202,11 @@ export async function handleCustomAffix(interaction: ButtonInteraction): Promise
 
   const modal = new ModalBuilder()
     .setCustomId(`affix_modal:${ownerId}:${length}:${charSetKey}`)
-    .setTitle("تخصيص البادئة والاحقة");
+    .setTitle("بادئة / لاحقة");
 
   const prefixInput = new TextInputBuilder()
     .setCustomId("prefix")
-    .setLabel("البادئة (اتركها فارغة إذا لم تريد)")
+    .setLabel("البادئة (اختياري)")
     .setStyle(TextInputStyle.Short)
     .setRequired(false)
     .setMaxLength(10)
@@ -244,7 +214,7 @@ export async function handleCustomAffix(interaction: ButtonInteraction): Promise
 
   const suffixInput = new TextInputBuilder()
     .setCustomId("suffix")
-    .setLabel("اللاحقة (اتركها فارغة إذا لم تريد)")
+    .setLabel("اللاحقة (اختياري)")
     .setStyle(TextInputStyle.Short)
     .setRequired(false)
     .setMaxLength(10)
@@ -267,22 +237,8 @@ export async function handleAffixModal(interaction: ModalSubmitInteraction): Pro
 
   const prefix = interaction.fields.getTextInputValue("prefix").trim();
   const suffix = interaction.fields.getTextInputValue("suffix").trim();
-
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle("✅ الإعداد جاهز")
-    .setDescription(
-      [
-        `**الطول:** ${length} حروف`,
-        `**النوع:** ${charSetKey}`,
-        prefix ? `**البادئة:** \`${prefix}\`` : "",
-        suffix ? `**اللاحقة:** \`${suffix}\`` : "",
-        "",
-        "اضغط **ابدأ الصيد** للبدء!",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
+  const session = getSession(ownerId);
+  const timeStr = session ? formatTimeLeft(session.startedAt) : "?";
 
   const startBtn = new ButtonBuilder()
     .setCustomId(`start_scan:${ownerId}:${length}:${charSetKey}:${prefix}:${suffix}`)
@@ -291,7 +247,14 @@ export async function handleAffixModal(interaction: ModalSubmitInteraction): Pro
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(startBtn);
 
-  await interaction.reply({ embeds: [embed], components: [row] });
+  const affixInfo = [prefix && `بادئة: \`${prefix}\``, suffix && `لاحقة: \`${suffix}\``]
+    .filter(Boolean)
+    .join(" | ");
+
+  await interaction.reply({
+    content: `⏱️ **${timeStr}** — **${length} حروف** | **${charSetKey}** | ${affixInfo}\n\nجاهز؟`,
+    components: [row],
+  });
 }
 
 export async function handleStartScan(interaction: ButtonInteraction): Promise<void> {
@@ -309,10 +272,9 @@ export async function handleStartScan(interaction: ButtonInteraction): Promise<v
 
   const session = getSession(ownerId);
   if (!session) {
-    await interaction.reply({ content: "❌ انتهت جلستك. الرجاء البدء من جديد.", ephemeral: true });
+    await interaction.reply({ content: "❌ انتهت جلستك.", ephemeral: true });
     return;
   }
-
   if (session.running) {
     await interaction.reply({ content: "⚠️ الصيد جارٍ بالفعل!", ephemeral: true });
     return;
@@ -323,45 +285,38 @@ export async function handleStartScan(interaction: ButtonInteraction): Promise<v
   session.stopRequested = false;
 
   const charSet = CHAR_SETS[charSetKey];
-
   await interaction.update({ components: [] });
 
-  const statusEmbed = new EmbedBuilder()
-    .setColor(0xfee75c)
-    .setTitle("🔍 جاري الصيد...")
-    .setDescription(
-      [
-        `**الطول:** ${length} | **النوع:** ${charSetKey}`,
-        prefix ? `**البادئة:** \`${prefix}\`` : "",
-        suffix ? `**اللاحقة:** \`${suffix}\`` : "",
-        "",
-        "⏳ يبحث البوت عن اليوزرات المتاحة...",
-        "سيظهر ✅ بجانب كل يوزر متاح.",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
+  const channel = interaction.channel as TextChannel;
+  const found: string[] = [];
+  let checked = 0;
+  let liveText = "";
 
-  const stopBtn = new ButtonBuilder()
-    .setCustomId(`stop_scan:${ownerId}`)
-    .setLabel("⏹️ إيقاف")
-    .setStyle(ButtonStyle.Danger);
+  const buildStatusLine = () => {
+    const timeStr = formatTimeLeft(session.startedAt);
+    return `⏱️ **${timeStr}** | فحص: **${checked}** | متاح: **${found.length}**`;
+  };
 
-  const stopRow = new ActionRowBuilder<ButtonBuilder>().addComponents(stopBtn);
+  const stopRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`stop_scan:${ownerId}`)
+      .setLabel("⏹️ إيقاف وأخذ الملف")
+      .setStyle(ButtonStyle.Danger),
+  );
 
-  const statusMsg = await (interaction.channel as TextChannel).send({
-    embeds: [statusEmbed],
+  const liveMsg = await channel.send({
+    content: `${buildStatusLine()}\n\`\`\`\nجاري البدء...\n\`\`\``,
     components: [stopRow],
   });
 
-  const found: string[] = [];
-  let checked = 0;
+  const RATE_LIMIT_DELAY = 500;
+  const MAX_FOUND = 20;
+  const LIVE_LINES = 10;
+
+  const recentLines: string[] = [];
 
   const { generateUsernames } = await import("../username-checker.js");
   const generator = generateUsernames({ length, charSet, prefix, suffix });
-
-  const RATE_LIMIT_DELAY = 500;
-  const MAX_FOUND = 20;
 
   for (const username of generator) {
     if (session.stopRequested || !getSession(ownerId)) break;
@@ -370,30 +325,22 @@ export async function handleStartScan(interaction: ButtonInteraction): Promise<v
     const available = await checkUsername(username);
     checked++;
 
+    const mark = available ? "✅" : "❌";
+    recentLines.push(`${mark} ${username}`);
+    if (recentLines.length > LIVE_LINES) recentLines.shift();
+
     if (available) {
       found.push(username);
       session.results.push(username);
-
-      await (interaction.channel as TextChannel).send(
-        `✅ **متاح:** \`${username}\``,
-      );
     }
 
-    if (checked % 10 === 0) {
-      const updatedEmbed = new EmbedBuilder()
-        .setColor(0xfee75c)
-        .setTitle("🔍 جاري الصيد...")
-        .setDescription(
-          [
-            `**تم فحص:** ${checked} يوزر`,
-            `**وجد:** ${found.length} متاح`,
-            "",
-            "⏳ لا يزال يبحث...",
-          ].join("\n"),
-        );
-
-      await statusMsg.edit({ embeds: [updatedEmbed], components: [stopRow] }).catch(() => {});
-    }
+    liveText = recentLines.join("\n");
+    await liveMsg
+      .edit({
+        content: `${buildStatusLine()}\n\`\`\`\n${liveText}\n\`\`\``,
+        components: [stopRow],
+      })
+      .catch(() => {});
 
     await sleep(RATE_LIMIT_DELAY);
   }
@@ -402,7 +349,8 @@ export async function handleStartScan(interaction: ButtonInteraction): Promise<v
 
   if (!getSession(ownerId)) return;
 
-  await finishScan(interaction.channel as TextChannel, ownerId, found, checked);
+  await liveMsg.edit({ content: buildStatusLine(), components: [] }).catch(() => {});
+  await finishScan(channel, ownerId, found, checked);
 }
 
 export async function handleStopScan(interaction: ButtonInteraction): Promise<void> {
@@ -413,13 +361,13 @@ export async function handleStopScan(interaction: ButtonInteraction): Promise<vo
   }
 
   const session = getSession(ownerId);
-  if (!session || !session.running) {
-    await interaction.reply({ content: "⚠️ لا يوجد صيد نشط.", ephemeral: true });
+  if (!session) {
+    await interaction.reply({ content: "⚠️ لا يوجد جلسة نشطة.", ephemeral: true });
     return;
   }
 
   session.stopRequested = true;
-  await interaction.reply({ content: "⏹️ جاري إيقاف الصيد..." });
+  await interaction.reply({ content: "⏹️ جاري الإيقاف..." });
 }
 
 async function finishScan(
@@ -429,42 +377,20 @@ async function finishScan(
   checked: number,
 ): Promise<void> {
   if (found.length === 0) {
-    const embed = new EmbedBuilder()
-      .setColor(0xed4245)
-      .setTitle("😔 لم يُعثر على يوزرات متاحة")
-      .setDescription(
-        `تم فحص **${checked}** يوزر ولم يُعثر على أي يوزر متاح.\nجرب إعدادات مختلفة!`,
-      );
-
-    await channel.send({ embeds: [embed] });
+    await channel.send(`❌ تم فحص **${checked}** يوزر — لم يُعثر على أي متاح.`);
     setCooldown(userId);
     await closeSession(userId, channel, "done");
     return;
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x57f287)
-    .setTitle("🎉 انتهى الصيد!")
-    .setDescription(
-      [
-        `تم فحص **${checked}** يوزر`,
-        `وُجد **${found.length}** يوزر متاح ✅`,
-        "",
-        "**هل تريد استلام النتائج؟**",
-        "",
-        "📄 **JSON** — ملف بصيغة آلية مناسب للبرمجة والأتمتة",
-        "📝 **TXT** — ملف نصي واضح تستطيع قراءته بسهولة",
-      ].join("\n"),
-    );
-
   const jsonBtn = new ButtonBuilder()
     .setCustomId(`send_results:${userId}:json`)
-    .setLabel("📄 استلم JSON")
+    .setLabel("📄 JSON")
     .setStyle(ButtonStyle.Primary);
 
   const txtBtn = new ButtonBuilder()
     .setCustomId(`send_results:${userId}:txt`)
-    .setLabel("📝 استلم TXT")
+    .setLabel("📝 TXT")
     .setStyle(ButtonStyle.Secondary);
 
   const skipBtn = new ButtonBuilder()
@@ -474,7 +400,16 @@ async function finishScan(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(jsonBtn, txtBtn, skipBtn);
 
-  await channel.send({ embeds: [embed], components: [row] });
+  await channel.send({
+    content: [
+      `🎉 انتهى الصيد! فحصت **${checked}** — وجدت **${found.length}** متاح ✅`,
+      "",
+      "استلم النتائج:",
+      "📄 **JSON** — للبرامج والأكواد",
+      "📝 **TXT** — نص واضح تقرأه مباشرة",
+    ].join("\n"),
+    components: [row],
+  });
 }
 
 export async function handleSendResults(interaction: ButtonInteraction): Promise<void> {
@@ -488,37 +423,35 @@ export async function handleSendResults(interaction: ButtonInteraction): Promise
   const results = session?.results ?? [];
 
   if (results.length === 0) {
-    await interaction.reply({ content: "⚠️ لا توجد نتائج للإرسال.", ephemeral: true });
+    await interaction.reply({ content: "⚠️ لا توجد نتائج.", ephemeral: true });
     return;
   }
 
   let fileContent: string;
   let fileName: string;
-  let description: string;
+  let note: string;
 
   if (format === "json") {
-    fileContent = JSON.stringify({ available_usernames: results, count: results.length, generated_at: new Date().toISOString() }, null, 2);
-    fileName = "available_usernames.json";
-    description = "📄 ملف **JSON** — يمكن استخدامه في البرمجة والأتمتة (`JSON.parse()`)";
+    fileContent = JSON.stringify(
+      { available_usernames: results, count: results.length, at: new Date().toISOString() },
+      null,
+      2,
+    );
+    fileName = "usernames.json";
+    note = "📄 **JSON** — استخدمه في كودك بـ `JSON.parse()`";
   } else {
     fileContent = results.join("\n");
-    fileName = "available_usernames.txt";
-    description = "📝 ملف **TXT** — كل يوزر في سطر، سهل القراءة";
+    fileName = "usernames.txt";
+    note = "📝 **TXT** — كل يوزر في سطر، سهل القراءة";
   }
 
-  const buffer = Buffer.from(fileContent, "utf-8");
-
   await interaction.reply({
-    content: `<@${ownerId}> إليك نتائجك!\n${description}`,
-    files: [{ attachment: buffer, name: fileName }],
+    content: `<@${ownerId}> ${note}`,
+    files: [{ attachment: Buffer.from(fileContent, "utf-8"), name: fileName }],
   });
 
   setCooldown(ownerId);
-
-  setTimeout(async () => {
-    const ch = interaction.channel as TextChannel;
-    await closeSession(ownerId, ch, "done");
-  }, 5000);
+  setTimeout(() => closeSession(ownerId, interaction.channel as TextChannel, "done"), 5000);
 }
 
 export async function handleSkipResults(interaction: ButtonInteraction): Promise<void> {
@@ -530,11 +463,7 @@ export async function handleSkipResults(interaction: ButtonInteraction): Promise
 
   await interaction.reply({ content: "سيتم إغلاق الروم خلال 5 ثواني..." });
   setCooldown(ownerId);
-
-  setTimeout(async () => {
-    const ch = interaction.channel as TextChannel;
-    await closeSession(ownerId, ch, "done");
-  }, 5000);
+  setTimeout(() => closeSession(ownerId, interaction.channel as TextChannel, "done"), 5000);
 }
 
 async function closeSession(
@@ -542,16 +471,23 @@ async function closeSession(
   channel: TextChannel,
   reason: "timeout" | "done",
 ): Promise<void> {
-  const msg =
-    reason === "timeout"
-      ? "⏰ انتهى وقت جلستك (10 دقائق). سيتم حذف هذا الروم تلقائياً."
-      : "✅ تم إغلاق جلستك. شكراً لاستخدام بوت الصيد!";
-
-  await channel.send(msg).catch(() => {});
+  if (reason === "timeout") {
+    const session = getSession(userId);
+    const results = session?.results ?? [];
+    if (results.length > 0) {
+      const fileContent = results.join("\n");
+      await channel
+        .send({
+          content: `⏰ انتهى وقت جلستك! إليك ما وجدناه (${results.length} يوزر):`,
+          files: [{ attachment: Buffer.from(fileContent, "utf-8"), name: "usernames.txt" }],
+        })
+        .catch(() => {});
+    } else {
+      await channel.send("⏰ انتهى وقت جلستك.").catch(() => {});
+    }
+    setCooldown(userId);
+  }
 
   deleteSession(userId);
-
-  setTimeout(async () => {
-    await channel.delete().catch(() => {});
-  }, 3000);
+  setTimeout(() => channel.delete().catch(() => {}), 3000);
 }

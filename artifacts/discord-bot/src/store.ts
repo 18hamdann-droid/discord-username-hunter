@@ -1,9 +1,10 @@
 import { COOLDOWN_MS } from "./config.js";
 
-interface UserSession {
+export interface UserSession {
   channelId: string;
   guildId: string;
   timeoutHandle: ReturnType<typeof setTimeout>;
+  startedAt: number;
   results: string[];
   running: boolean;
   stopRequested: boolean;
@@ -26,9 +27,7 @@ export function setSession(userId: string, session: UserSession): void {
 
 export function deleteSession(userId: string): void {
   const session = sessions.get(userId);
-  if (session) {
-    clearTimeout(session.timeoutHandle);
-  }
+  if (session) clearTimeout(session.timeoutHandle);
   sessions.delete(userId);
 }
 
