@@ -1,45 +1,58 @@
-# [Project name]
+# Discord Username Hunter Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+بوت Discord يساعد المستخدمين في إيجاد يوزرات Discord المتاحة بأطوال وأنواع مخصصة.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/discord-bot run start` — تشغيل البوت
+- `pnpm --filter @workspace/api-server run dev` — تشغيل API server (port 5000)
+- `pnpm run typecheck` — فحص الأنواع
+- Required env: `DISCORD_BOT_TOKEN` — توكن بوت Discord
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
+- Bot: discord.js v14
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Build: tsx (TypeScript runner)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/discord-bot/src/index.ts` — نقطة الدخول الرئيسية للبوت
+- `artifacts/discord-bot/src/commands/` — معالجات الأوامر والتفاعلات
+- `artifacts/discord-bot/src/store.ts` — إدارة الجلسات والـ cooldown
+- `artifacts/discord-bot/src/username-checker.ts` — منطق فحص اليوزرات
+- `artifacts/discord-bot/src/config.ts` — الإعدادات (مدة الجلسة، cooldown)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- البوت يستخدم Discord API مباشرة لفحص اليوزرات عبر `/unique-username/username-attempt-unauthed`
+- الجلسات تُخزن في الذاكرة (Map) لأنها مؤقتة (10 دقائق)
+- كل مستخدم له روم خاص يُنشأ عند البدء ويُحذف عند الانتهاء
+- Rate limiting: 500ms بين كل فحص لتجنب الحظر
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- أمر `/setup` للأونر/أدمن ينشر رسالة مع زر في روم عام
+- عند الضغط على الزر يُنشأ روم خاص للمستخدم
+- المستخدم يختار: طول اليوزر (3-6)، نوع الحروف (حروف/أرقام/الاثنان)، بادئة/لاحقة اختيارية
+- مؤقت 10 دقائق يظهر فوق الروم، cooldown 4 ساعات بين الجلسات
+- عند الانتهاء يُرسل النتائج كملف JSON أو TXT مع شرح الفرق
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- البوت يدعم العربية في جميع الرسائل
+- الـ cooldown: 4 ساعات لكل مستخدم
+- مدة الجلسة: 10 دقائق
+- أقصى عدد يوزرات مُعادة: 20
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- `DISCORD_BOT_TOKEN` مطلوب في secrets
+- البوت يسجّل الأوامر globally عند الإقلاع (قد يستغرق حتى ساعة للظهور في Discord)
+- للتسجيل الفوري في سيرفر معين استخدم `Routes.applicationGuildCommands`
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See the `pnpm-workspace` skill for workspace structure
