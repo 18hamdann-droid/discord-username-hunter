@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+cmds = ["npm install -g pnpm@10 --ignore-scripts"]
+
+[phases.install]
+cmds = ["pnpm install --filter @workspace/discord-bot... --ignore-scripts --frozen-lockfile || pnpm install --filter @workspace/discord-bot... --ignore-scripts"]
+
+[phases.build]
+cmds = []
+
+[start]
+cmd = "pnpm --filter @workspace/discord-bot run start"
