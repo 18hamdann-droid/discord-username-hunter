@@ -31,16 +31,7 @@ export async function checkUsername(username: string): Promise<boolean> {
   }
 }
 
-export function generateUsernames(config: {
-  length: number;
-  charSet: string;
-  prefix?: string;
-  suffix?: string;
-}): Generator<string> {
-  return generateCombinations(config);
-}
-
-function* generateCombinations(config: {
+export function* generateRandomUsernames(config: {
   length: number;
   charSet: string;
   prefix?: string;
@@ -55,21 +46,55 @@ function* generateCombinations(config: {
     return;
   }
 
-  const indices = new Array(innerLength).fill(0);
+  const totalCombinations = Math.pow(chars.length, innerLength);
 
-  while (true) {
-    const inner = indices.map((i) => chars[i]).join("");
-    yield prefix + inner + suffix;
-
-    let pos = innerLength - 1;
-    while (pos >= 0) {
-      indices[pos]++;
-      if (indices[pos] < chars.length) break;
-      indices[pos] = 0;
-      pos--;
+  if (totalCombinations <= 150_000) {
+    const all: string[] = [];
+    const indices = new Array(innerLength).fill(0);
+    while (true) {
+      all.push(prefix + indices.map((i) => chars[i]).join("") + suffix);
+      let pos = innerLength - 1;
+      while (pos >= 0) {
+        indices[pos]++;
+        if (indices[pos] < chars.length) break;
+        indices[pos] = 0;
+        pos--;
+      }
+      if (pos < 0) break;
     }
-    if (pos < 0) break;
+    for (let i = all.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [all[i], all[j]] = [all[j]!, all[i]!];
+    }
+    yield* all;
+  } else {
+    const seen = new Set<string>();
+    let consecutiveDups = 0;
+    while (consecutiveDups < 200) {
+      let inner = "";
+      for (let i = 0; i < innerLength; i++) {
+        inner += chars[Math.floor(Math.random() * chars.length)];
+      }
+      const username = prefix + inner + suffix;
+      if (!seen.has(username)) {
+        seen.add(username);
+        consecutiveDups = 0;
+        yield username;
+      } else {
+        consecutiveDups++;
+      }
+    }
   }
+}
+
+export function totalCombinations(config: {
+  length: number;
+  charSet: string;
+  prefix?: string;
+  suffix?: string;
+}): number {
+  const inner = config.length - (config.prefix?.length ?? 0) - (config.suffix?.length ?? 0);
+  return inner <= 0 ? 1 : Math.pow(config.charSet.length, inner);
 }
 
 function sleep(ms: number): Promise<void> {
